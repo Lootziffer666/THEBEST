@@ -1,0 +1,11 @@
+# Gradle and Android build output
+.gradle/
+build/
+app/build/
+
+# Local IDE files
+.idea/
+*.iml
+
+# OS noise
+.DS_Store
