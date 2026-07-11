@@ -11,6 +11,7 @@ import java.util.Set;
 
 final class LauncherStore {
     private static final String FAVORITES = "favorites";
+    private static final String FAVORITES_ORDER = "favorites_order";
     private static final String HIDDEN = "hidden";
     private static final String RECENTS = "recents";
     private static final String ACCENT = "accent";
@@ -22,6 +23,8 @@ final class LauncherStore {
     }
 
     Set<String> favorites() {
+        LinkedHashSet<String> ordered = orderedSet(FAVORITES_ORDER);
+        if (!ordered.isEmpty()) return ordered;
         return new LinkedHashSet<>(prefs.getStringSet(FAVORITES, new LinkedHashSet<>()));
     }
 
@@ -30,9 +33,7 @@ final class LauncherStore {
     }
 
     List<String> recents() {
-        String raw = prefs.getString(RECENTS, "");
-        if (raw.isEmpty()) return new ArrayList<>();
-        return new ArrayList<>(Arrays.asList(raw.split("\\n")));
+        return new ArrayList<>(orderedSet(RECENTS));
     }
 
     int accent() {
@@ -40,10 +41,13 @@ final class LauncherStore {
     }
 
     boolean toggleFavorite(String key) {
-        Set<String> values = favorites();
+        LinkedHashSet<String> values = new LinkedHashSet<>(favorites());
         boolean added = values.add(key);
         if (!added) values.remove(key);
-        prefs.edit().putStringSet(FAVORITES, values).apply();
+        prefs.edit()
+                .putStringSet(FAVORITES, values)
+                .putString(FAVORITES_ORDER, join(values))
+                .apply();
         return added;
     }
 
@@ -62,10 +66,41 @@ final class LauncherStore {
             if (values.size() >= 8) break;
             values.add(old);
         }
-        prefs.edit().putString(RECENTS, String.join("\n", values)).apply();
+        prefs.edit().putString(RECENTS, join(values)).apply();
     }
 
     void setAccent(int color) {
         prefs.edit().putInt(ACCENT, color).apply();
+    }
+
+    void clearPersonalization() {
+        prefs.edit()
+                .remove(FAVORITES)
+                .remove(FAVORITES_ORDER)
+                .remove(HIDDEN)
+                .remove(RECENTS)
+                .remove(ACCENT)
+                .apply();
+    }
+
+    String exportText() {
+        return "THEBEST backup\n"
+                + "favorites=" + join(favorites()) + "\n"
+                + "hidden=" + join(hidden()) + "\n"
+                + "recents=" + join(new LinkedHashSet<>(recents())) + "\n"
+                + "accent=" + Integer.toHexString(accent());
+    }
+
+    private LinkedHashSet<String> orderedSet(String key) {
+        String raw = prefs.getString(key, "");
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        if (raw.isEmpty()) return values;
+        values.addAll(Arrays.asList(raw.split("\\n")));
+        values.remove("");
+        return values;
+    }
+
+    private String join(Set<String> values) {
+        return String.join("\n", values);
     }
 }

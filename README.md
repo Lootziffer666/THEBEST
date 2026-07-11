@@ -11,8 +11,10 @@ THEBEST is an experimental Android launcher built around one question: what if t
 - Turns search results into large, readable launch cards with the best match promoted as the primary action.
 - Supports gestures: swipe down to search, swipe up to commands.
 - Long-presses any app for pin/unpin, hide/unhide, app info, or uninstall.
-- Provides local commands: `:theme`, `:hidden`, `:settings`, `:apps`, `:all`, and `:about`.
-- Persists favourites, hidden apps, recents, and accent colour locally in `SharedPreferences`.
+- Provides local commands: `:theme`, `:hidden`, `:settings`, `:apps`, `:all`, `:backup`, `:reset`, and `:about`.
+- Supports search lenses: `#fav` for pinned apps and `#recent` for launch history.
+- Lets the keyboard GO action launch the best ranked match.
+- Persists favourites, hidden apps, recents, and accent colour locally in `SharedPreferences`, with a clipboard backup command.
 
 ## Philosophy
 

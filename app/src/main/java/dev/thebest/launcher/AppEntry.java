@@ -25,6 +25,7 @@ final class AppEntry {
     }
 
     static String normalize(String value) {
+        if (value == null) return "";
         String decomposed = Normalizer.normalize(value, Normalizer.Form.NFD);
         return decomposed.replaceAll("\\p{InCombiningDiacriticalMarks}+", "").toLowerCase(Locale.getDefault()).trim();
     }

@@ -25,6 +25,7 @@ final class SearchRanker {
     private int score(AppEntry app, String query, boolean favorite, boolean recent) {
         int score = 0;
         if (query.isEmpty()) {
+            score = 10;
             if (favorite) score += 60;
             if (recent) score += 45;
             return score;

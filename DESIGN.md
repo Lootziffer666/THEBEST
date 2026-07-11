@@ -27,7 +27,9 @@ A near-perfect launcher should make the phone feel quieter, faster, and more own
 - Focused search mode with large ranked result cards and a primary first-result affordance.
 - Smart row with recents, command entry, clear search, settings, and launch-first actions.
 - Swipe down to focus search; swipe up to enter commands.
-- Command palette for theme, hidden apps, Android settings, app settings, full library, and about.
+- Command palette for theme, hidden apps, Android settings, app settings, full library, local backup, reset, and about.
+- Search lenses such as `#fav` and `#recent` for deliberate local scopes.
+- Keyboard GO launches the top ranked result for muscle-memory speed.
 - Long-press app menu for favourites, hiding, app info, and uninstall.
 - Hidden-app review flow.
 - Accent theme cycling with a matching gradient backdrop.

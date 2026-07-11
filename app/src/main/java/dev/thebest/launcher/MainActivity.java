@@ -2,6 +2,8 @@ package dev.thebest.launcher;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.LauncherActivityInfo;
@@ -20,6 +22,7 @@ import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.GridLayout;
@@ -77,7 +80,6 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(14), dp(18), dp(10));
         root.setBackground(makeBackdrop());
-        root.setOnTouchListener((view, event) -> handleGesture(event));
         setContentView(root);
 
         LinearLayout header = new LinearLayout(this);
@@ -111,6 +113,14 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(58));
         searchParams.setMargins(0, dp(18), 0, dp(10));
         root.addView(search, searchParams);
+        search.setImeOptions(EditorInfo.IME_ACTION_GO);
+        search.setOnEditorActionListener((view, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_GO && !visible.isEmpty()) {
+                launch(visible.get(0));
+                return true;
+            }
+            return false;
+        });
         search.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             public void onTextChanged(CharSequence s, int start, int before, int count) { applyQuery(s.toString()); }
@@ -163,7 +173,9 @@ public class MainActivity extends Activity {
         Set<String> favorites = store.favorites();
         List<String> recents = store.recents();
         visible.clear();
-        visible.addAll(ranker.rank(apps, query, favorites, recents, hidden));
+        if (query.equalsIgnoreCase("#fav")) visible.addAll(filteredByKeys(favorites, hidden));
+        else if (query.equalsIgnoreCase("#recent")) visible.addAll(filteredByKeys(recents, hidden));
+        else visible.addAll(ranker.rank(apps, query, favorites, recents, hidden));
         renderSmartRow(query);
         renderFavorites(hidden);
         renderFocusResults(query, visible);
@@ -218,6 +230,15 @@ public class MainActivity extends Activity {
         return result;
     }
 
+    private List<AppEntry> filteredByKeys(Iterable<String> keys, Set<String> hidden) {
+        List<AppEntry> result = new ArrayList<>();
+        for (String key : keys) {
+            AppEntry app = byKey.get(key);
+            if (app != null && !hidden.contains(key)) result.add(app);
+        }
+        return result;
+    }
+
     private void renderLibrary(List<AppEntry> list) {
         sectionList.removeAllViews();
         if (list.isEmpty()) {
@@ -251,7 +272,9 @@ public class MainActivity extends Activity {
         addCommand(":hidden", "review hidden apps", v -> showHiddenApps());
         addCommand(":settings", "open Android settings", v -> openSystemSettings());
         addCommand(":apps", "open Android app settings", v -> startActivity(new Intent(Settings.ACTION_APPLICATION_SETTINGS)));
-        addCommand(":all", "open the full alphabetised library", v -> renderLibrary(libraryApps()));
+        addCommand(":all", "open the full alphabetised library", v -> { hideKeyboard(); renderLibrary(libraryApps()); status.setText("full library · " + libraryApps().size() + " apps · all local"); });
+        addCommand(":backup", "copy local launcher state", v -> copyBackup());
+        addCommand(":reset", "clear local personalization", v -> confirmReset());
         addCommand(":about", "explain THEBEST", v -> showAbout());
     }
 
@@ -444,8 +467,29 @@ public class MainActivity extends Activity {
         }
         new AlertDialog.Builder(this)
                 .setTitle("Hidden apps")
-                .setItems(labels, (dialog, which) -> { store.toggleHidden(keys[which]); applyQuery(""); })
+                .setItems(labels, (dialog, which) -> { store.toggleHidden(keys[which]); search.setText(""); })
                 .setNegativeButton("Close", null)
+                .show();
+    }
+
+    private void copyBackup() {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        clipboard.setPrimaryClip(ClipData.newPlainText("THEBEST backup", store.exportText()));
+        toast("Local THEBEST backup copied");
+    }
+
+    private void confirmReset() {
+        new AlertDialog.Builder(this)
+                .setTitle("Reset THEBEST?")
+                .setMessage("This clears favourites, hidden apps, recents, and accent colour on this device only.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Reset", (dialog, which) -> {
+                    store.clearPersonalization();
+                    accent = store.accent();
+                    root.setBackground(makeBackdrop());
+                    search.setText("");
+                    applyQuery("");
+                })
                 .show();
     }
 
@@ -467,7 +511,7 @@ public class MainActivity extends Activity {
             store.rememberLaunch(app.key);
             startActivity(intent);
             search.setText("");
-            ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(search.getWindowToken(), 0);
+            hideKeyboard();
         } catch (Exception ex) {
             toast("Cannot launch " + app.label);
         }
@@ -499,25 +543,30 @@ public class MainActivity extends Activity {
         ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(search, InputMethodManager.SHOW_IMPLICIT);
     }
 
-    private boolean handleGesture(MotionEvent event) {
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
         if (event.getAction() == MotionEvent.ACTION_DOWN) {
             touchDownY = event.getY();
-            return true;
-        }
-        if (event.getAction() == MotionEvent.ACTION_UP) {
+        } else if (event.getAction() == MotionEvent.ACTION_UP) {
             float delta = event.getY() - touchDownY;
-            if (delta > dp(70)) {
-                search.requestFocus();
-                ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(search, InputMethodManager.SHOW_IMPLICIT);
+            if (delta > dp(90)) {
+                focusSearch();
                 return true;
             }
-            if (delta < -dp(70)) {
-                search.setText(":");
-                search.setSelection(search.length());
+            if (delta < -dp(90)) {
+                focusCommand();
                 return true;
             }
         }
-        return false;
+        return super.dispatchTouchEvent(event);
+    }
+
+    private void focusSearch() {
+        search.requestFocus();
+        ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(search, InputMethodManager.SHOW_IMPLICIT);
+    }
+
+    private void hideKeyboard() {
+        ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(search.getWindowToken(), 0);
     }
 
     private TextView text(String value, int sp, int color, boolean bold) {
