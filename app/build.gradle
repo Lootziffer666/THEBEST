@@ -1,5 +1,23 @@
-plugins { id 'com.android.application' }
+plugins { alias(libs.plugins.android.application) }
 
 android { namespace 'dev.thebest.launcher'; compileSdk 36
     defaultConfig { applicationId 'dev.thebest.launcher'; minSdk 26; targetSdk 36; versionCode 1; versionName '0.1.0' }
+}
+
+dependencies {
+    testImplementation libs.junit
+}
+
+
+tasks.register('verifyNoInternetPermission') {
+    description = 'Fails if the launcher declares Android Internet permission.'
+    group = 'verification'
+    inputs.file(layout.projectDirectory.file('src/main/AndroidManifest.xml'))
+
+    doLast {
+        def manifest = layout.projectDirectory.file('src/main/AndroidManifest.xml').asFile.text
+        if (manifest.contains('android.permission.INTERNET')) {
+            throw new GradleException('THEBEST must stay offline: INTERNET permission is forbidden.')
+        }
+    }
 }
