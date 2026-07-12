@@ -9,3 +9,6 @@ app/build/
 
 # OS noise
 .DS_Store
+
+# Binary wrapper artifact is distributed out-of-band.
+gradle/wrapper/gradle-wrapper.jar

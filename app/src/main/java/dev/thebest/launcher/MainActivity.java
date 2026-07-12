@@ -6,14 +6,14 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Intent;
-import android.content.pm.LauncherActivityInfo;
 import android.content.pm.LauncherApps;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Process;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -34,7 +34,6 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.text.Collator;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -47,10 +46,10 @@ public class MainActivity extends Activity {
     private final List<AppEntry> apps = new ArrayList<>();
     private final List<AppEntry> visible = new ArrayList<>();
     private final Map<String, AppEntry> byKey = new HashMap<>();
-    private final Collator collator = Collator.getInstance(Locale.getDefault());
     private final SearchRanker ranker = new SearchRanker();
 
     private LauncherStore store;
+    private AppRepository appRepository;
     private LinearLayout root;
     private LinearLayout smartRow;
     private LinearLayout favoritesRow;
@@ -59,20 +58,37 @@ public class MainActivity extends Activity {
     private TextView status;
     private float touchDownY;
     private int accent;
+    private String lastQuery = "";
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         store = new LauncherStore(getSharedPreferences("thebest", MODE_PRIVATE));
+        LauncherApps launcherApps = (LauncherApps) getSystemService(LAUNCHER_APPS_SERVICE);
+        appRepository = new AppRepository(launcherApps, new Handler(Looper.getMainLooper()));
+        appRepository.setListener(this::onAppsChanged);
         accent = store.accent();
         buildUi();
-        reloadApps();
         applyQuery("");
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        appRepository.start();
     }
 
     @Override protected void onResume() {
         super.onResume();
-        reloadApps();
-        applyQuery(search == null ? "" : search.getText().toString());
+        appRepository.refresh();
+    }
+
+    @Override protected void onStop() {
+        appRepository.stop();
+        super.onStop();
+    }
+
+    @Override protected void onDestroy() {
+        appRepository.shutdown();
+        super.onDestroy();
     }
 
     private void buildUi() {
@@ -151,16 +167,12 @@ public class MainActivity extends Activity {
         return row;
     }
 
-    private void reloadApps() {
+    private void onAppsChanged(List<AppEntry> loadedApps) {
         apps.clear();
+        apps.addAll(loadedApps);
         byKey.clear();
-        LauncherApps launcherApps = (LauncherApps) getSystemService(LAUNCHER_APPS_SERVICE);
-        for (LauncherActivityInfo info : launcherApps.getActivityList(null, Process.myUserHandle())) {
-            AppEntry app = new AppEntry(info);
-            apps.add(app);
-            byKey.put(app.key, app);
-        }
-        apps.sort((a, b) -> collator.compare(a.label, b.label));
+        for (AppEntry app : apps) byKey.put(app.key, app);
+        applyQuery(search == null ? "" : search.getText().toString());
     }
 
     private void applyQuery(String raw) {
@@ -169,6 +181,7 @@ public class MainActivity extends Activity {
             renderCommandPalette(query);
             return;
         }
+        lastQuery = query;
         Set<String> hidden = store.hidden();
         Set<String> favorites = store.favorites();
         List<String> recents = store.recents();
@@ -274,8 +287,45 @@ public class MainActivity extends Activity {
         addCommand(":apps", "open Android app settings", v -> startActivity(new Intent(Settings.ACTION_APPLICATION_SETTINGS)));
         addCommand(":all", "open the full alphabetised library", v -> { hideKeyboard(); renderLibrary(libraryApps()); status.setText("full library · " + libraryApps().size() + " apps · all local"); });
         addCommand(":backup", "copy local launcher state", v -> copyBackup());
+        addCommand(":warum", "explain the current ranking", v -> renderWhy());
         addCommand(":reset", "clear local personalization", v -> confirmReset());
         addCommand(":about", "explain THEBEST", v -> showAbout());
+    }
+
+
+    private void renderWhy() {
+        sectionList.removeAllViews();
+        hideKeyboard();
+        String explainedQuery = lastQuery;
+        List<SearchRanker.RankExplanation> explanations = ranker.explain(apps, explainedQuery, store.favorites(), store.recents(), store.hidden());
+        status.setText("why · " + (explainedQuery.isEmpty() ? "home predictions" : explainedQuery) + " · local scoring");
+        if (explanations.isEmpty()) {
+            sectionList.addView(emptyCard("Nothing to explain yet. Search for an app, then run :warum."));
+            return;
+        }
+        int limit = Math.min(8, explanations.size());
+        for (int i = 0; i < limit; i++) sectionList.addView(whyCard(explanations.get(i), i));
+    }
+
+    private View whyCard(SearchRanker.RankExplanation explanation, int index) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(10), dp(16), dp(10));
+        card.setMinimumHeight(dp(72));
+        card.setBackground(round(index == 0 ? 0xff1d2a36 : 0xff11151d, 24, index == 0 ? accent : 0xff202938));
+        card.setContentDescription("Why " + explanation.app.label + " ranked with score " + explanation.score);
+
+        TextView label = text((index + 1) + ". " + explanation.app.label + " · " + explanation.score, 16, Color.WHITE, index == 0);
+        TextView reason = text(explanation.summary(), 12, 0xffaeb7c2, false);
+        reason.setPadding(0, dp(4), 0, 0);
+        card.addView(label);
+        card.addView(reason);
+        card.setOnClickListener(v -> launch(explanation.app));
+        card.setOnLongClickListener(v -> { showAppMenu(v, explanation.app); return true; });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(84));
+        params.setMargins(0, dp(5), 0, dp(5));
+        card.setLayoutParams(params);
+        return card;
     }
 
     private void addCommand(String command, String detail, View.OnClickListener listener) {
