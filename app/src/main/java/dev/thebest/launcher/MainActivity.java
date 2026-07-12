@@ -6,14 +6,14 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Intent;
-import android.content.pm.LauncherActivityInfo;
 import android.content.pm.LauncherApps;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Process;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -34,9 +34,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.text.Collator;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -47,10 +47,10 @@ public class MainActivity extends Activity {
     private final List<AppEntry> apps = new ArrayList<>();
     private final List<AppEntry> visible = new ArrayList<>();
     private final Map<String, AppEntry> byKey = new HashMap<>();
-    private final Collator collator = Collator.getInstance(Locale.getDefault());
     private final SearchRanker ranker = new SearchRanker();
 
     private LauncherStore store;
+    private AppRepository appRepository;
     private LinearLayout root;
     private LinearLayout smartRow;
     private LinearLayout favoritesRow;
@@ -59,20 +59,37 @@ public class MainActivity extends Activity {
     private TextView status;
     private float touchDownY;
     private int accent;
+    private String lastQuery = "";
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         store = new LauncherStore(getSharedPreferences("thebest", MODE_PRIVATE));
+        LauncherApps launcherApps = (LauncherApps) getSystemService(LAUNCHER_APPS_SERVICE);
+        appRepository = new AppRepository(launcherApps, new Handler(Looper.getMainLooper()));
+        appRepository.setListener(this::onAppsChanged);
         accent = store.accent();
         buildUi();
-        reloadApps();
         applyQuery("");
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        appRepository.start();
     }
 
     @Override protected void onResume() {
         super.onResume();
-        reloadApps();
-        applyQuery(search == null ? "" : search.getText().toString());
+        appRepository.refresh();
+    }
+
+    @Override protected void onStop() {
+        appRepository.stop();
+        super.onStop();
+    }
+
+    @Override protected void onDestroy() {
+        appRepository.shutdown();
+        super.onDestroy();
     }
 
     private void buildUi() {
@@ -102,7 +119,7 @@ public class MainActivity extends Activity {
 
         search = new EditText(this);
         search.setSingleLine(true);
-        search.setHint("Type an intention — e.g. cam, maps, pay, :all…");
+        search.setHint("Type an intention — e.g. cam, #fav maps, #hidden, :all…");
         search.setHintTextColor(0xff7d8793);
         search.setTextColor(Color.WHITE);
         search.setTextSize(18);
@@ -151,16 +168,12 @@ public class MainActivity extends Activity {
         return row;
     }
 
-    private void reloadApps() {
+    private void onAppsChanged(List<AppEntry> loadedApps) {
         apps.clear();
+        apps.addAll(loadedApps);
         byKey.clear();
-        LauncherApps launcherApps = (LauncherApps) getSystemService(LAUNCHER_APPS_SERVICE);
-        for (LauncherActivityInfo info : launcherApps.getActivityList(null, Process.myUserHandle())) {
-            AppEntry app = new AppEntry(info);
-            apps.add(app);
-            byKey.put(app.key, app);
-        }
-        apps.sort((a, b) -> collator.compare(a.label, b.label));
+        for (AppEntry app : apps) byKey.put(app.key, app);
+        applyQuery(search == null ? "" : search.getText().toString());
     }
 
     private void applyQuery(String raw) {
@@ -169,17 +182,27 @@ public class MainActivity extends Activity {
             renderCommandPalette(query);
             return;
         }
+        lastQuery = query;
+        SearchLens lens = SearchLens.parse(query);
         Set<String> hidden = store.hidden();
         Set<String> favorites = store.favorites();
         List<String> recents = store.recents();
         visible.clear();
-        if (query.equalsIgnoreCase("#fav")) visible.addAll(filteredByKeys(favorites, hidden));
-        else if (query.equalsIgnoreCase("#recent")) visible.addAll(filteredByKeys(recents, hidden));
-        else visible.addAll(ranker.rank(apps, query, favorites, recents, hidden));
+        if (lens.is(SearchLens.FAVORITES)) {
+            List<AppEntry> favoriteApps = filteredByKeys(favorites, hidden);
+            visible.addAll(rankLens(favoriteApps, lens.query, favorites, recents, hidden));
+        } else if (lens.is(SearchLens.RECENTS)) {
+            List<AppEntry> recentApps = filteredByKeys(recents, hidden);
+            visible.addAll(rankLens(recentApps, lens.query, favorites, recents, hidden));
+        } else if (lens.is(SearchLens.HIDDEN)) {
+            visible.addAll(rankLens(hiddenApps(hidden), lens.query, favorites, recents, new HashSet<>()));
+        } else {
+            visible.addAll(ranker.rank(apps, lens.query, favorites, recents, hidden));
+        }
         renderSmartRow(query);
         renderFavorites(hidden);
         renderFocusResults(query, visible);
-        status.setText(statusLine(query, visible.size(), hidden.size()));
+        status.setText(statusLine(lens, visible.size(), hidden.size()));
     }
 
     private void renderSmartRow(String query) {
@@ -230,6 +253,17 @@ public class MainActivity extends Activity {
         return result;
     }
 
+    private List<AppEntry> hiddenApps(Set<String> hidden) {
+        List<AppEntry> result = new ArrayList<>();
+        for (AppEntry app : apps) if (hidden.contains(app.key)) result.add(app);
+        return result;
+    }
+
+    private List<AppEntry> rankLens(List<AppEntry> candidates, String lensQuery, Set<String> favorites, List<String> recents, Set<String> hidden) {
+        if (lensQuery.isEmpty()) return candidates;
+        return ranker.rank(candidates, lensQuery, favorites, recents, hidden);
+    }
+
     private List<AppEntry> filteredByKeys(Iterable<String> keys, Set<String> hidden) {
         List<AppEntry> result = new ArrayList<>();
         for (String key : keys) {
@@ -274,8 +308,45 @@ public class MainActivity extends Activity {
         addCommand(":apps", "open Android app settings", v -> startActivity(new Intent(Settings.ACTION_APPLICATION_SETTINGS)));
         addCommand(":all", "open the full alphabetised library", v -> { hideKeyboard(); renderLibrary(libraryApps()); status.setText("full library · " + libraryApps().size() + " apps · all local"); });
         addCommand(":backup", "copy local launcher state", v -> copyBackup());
+        addCommand(":warum", "explain the current ranking", v -> renderWhy());
         addCommand(":reset", "clear local personalization", v -> confirmReset());
         addCommand(":about", "explain THEBEST", v -> showAbout());
+    }
+
+
+    private void renderWhy() {
+        sectionList.removeAllViews();
+        hideKeyboard();
+        String explainedQuery = lastQuery;
+        List<SearchRanker.RankExplanation> explanations = ranker.explain(apps, explainedQuery, store.favorites(), store.recents(), store.hidden());
+        status.setText("why · " + (explainedQuery.isEmpty() ? "home predictions" : explainedQuery) + " · local scoring");
+        if (explanations.isEmpty()) {
+            sectionList.addView(emptyCard("Nothing to explain yet. Search for an app, then run :warum."));
+            return;
+        }
+        int limit = Math.min(8, explanations.size());
+        for (int i = 0; i < limit; i++) sectionList.addView(whyCard(explanations.get(i), i));
+    }
+
+    private View whyCard(SearchRanker.RankExplanation explanation, int index) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(10), dp(16), dp(10));
+        card.setMinimumHeight(dp(72));
+        card.setBackground(round(index == 0 ? 0xff1d2a36 : 0xff11151d, 24, index == 0 ? accent : 0xff202938));
+        card.setContentDescription("Why " + explanation.app.label + " ranked with score " + explanation.score);
+
+        TextView label = text((index + 1) + ". " + explanation.app.label + " · " + explanation.score, 16, Color.WHITE, index == 0);
+        TextView reason = text(explanation.summary(), 12, 0xffaeb7c2, false);
+        reason.setPadding(0, dp(4), 0, 0);
+        card.addView(label);
+        card.addView(reason);
+        card.setOnClickListener(v -> launch(explanation.app));
+        card.setOnLongClickListener(v -> { showAppMenu(v, explanation.app); return true; });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(84));
+        params.setMargins(0, dp(5), 0, dp(5));
+        card.setLayoutParams(params);
+        return card;
     }
 
     private void addCommand(String command, String detail, View.OnClickListener listener) {
@@ -335,8 +406,11 @@ public class MainActivity extends Activity {
         return card;
     }
 
-    private String statusLine(String query, int resultCount, int hiddenCount) {
-        if (query.isEmpty()) return "quiet home · " + hiddenCount + " hidden · all local";
+    private String statusLine(SearchLens lens, int resultCount, int hiddenCount) {
+        if (lens.is(SearchLens.HIDDEN)) return resultCount + " hidden matches · long-press to unhide · all local";
+        if (lens.is(SearchLens.FAVORITES)) return resultCount + " favourite matches · " + hiddenCount + " hidden · all local";
+        if (lens.is(SearchLens.RECENTS)) return resultCount + " recent matches · " + hiddenCount + " hidden · all local";
+        if (lens.query.isEmpty()) return "quiet home · " + hiddenCount + " hidden · all local";
         return resultCount + " ranked matches · " + hiddenCount + " hidden · all local";
     }
 

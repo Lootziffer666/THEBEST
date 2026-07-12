@@ -13,10 +13,18 @@ final class AppEntry {
     final String searchable;
 
     AppEntry(LauncherActivityInfo info) {
+        this(info.getLabel().toString(), info.getComponentName().flattenToString(), info.getComponentName().getPackageName(), info);
+    }
+
+    AppEntry(String label, String packageName) {
+        this(label, packageName + "/.MainActivity", packageName, null);
+    }
+
+    private AppEntry(String label, String key, String packageName, LauncherActivityInfo info) {
         this.info = info;
-        this.label = info.getLabel().toString();
-        this.key = info.getComponentName().flattenToString();
-        this.packageName = info.getComponentName().getPackageName();
+        this.label = label;
+        this.key = key;
+        this.packageName = packageName;
         this.searchable = normalize(label + " " + packageName);
     }
 
@@ -26,7 +34,8 @@ final class AppEntry {
 
     static String normalize(String value) {
         if (value == null) return "";
-        String decomposed = Normalizer.normalize(value, Normalizer.Form.NFD);
+        String transliterated = value.replace("ß", "ss").replace("ẞ", "SS");
+        String decomposed = Normalizer.normalize(transliterated, Normalizer.Form.NFD);
         return decomposed.replaceAll("\\p{InCombiningDiacriticalMarks}+", "").toLowerCase(Locale.getDefault()).trim();
     }
 }
