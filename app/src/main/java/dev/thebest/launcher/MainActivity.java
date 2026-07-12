@@ -48,6 +48,7 @@ public class MainActivity extends Activity {
     private final List<AppEntry> visible = new ArrayList<>();
     private final Map<String, AppEntry> byKey = new HashMap<>();
     private final SearchRanker ranker = new SearchRanker();
+    private final Calculator calculator = new Calculator();
 
     private LauncherStore store;
     private AppRepository appRepository;
@@ -119,7 +120,7 @@ public class MainActivity extends Activity {
 
         search = new EditText(this);
         search.setSingleLine(true);
-        search.setHint("Type an intention — e.g. cam, #fav maps, #hidden, :all…");
+        search.setHint("Type an intention — e.g. cam, =19*4, #fav maps, :all…");
         search.setHintTextColor(0xff7d8793);
         search.setTextColor(Color.WHITE);
         search.setTextSize(18);
@@ -182,6 +183,10 @@ public class MainActivity extends Activity {
             renderCommandPalette(query);
             return;
         }
+        if (query.startsWith("=")) {
+            renderCalculator(query);
+            return;
+        }
         lastQuery = query;
         SearchLens lens = SearchLens.parse(query);
         Set<String> hidden = store.hidden();
@@ -203,6 +208,44 @@ public class MainActivity extends Activity {
         renderFavorites(hidden);
         renderFocusResults(query, visible);
         status.setText(statusLine(lens, visible.size(), hidden.size()));
+    }
+
+
+    private void renderCalculator(String query) {
+        lastQuery = query;
+        smartRow.removeAllViews();
+        favoritesRow.removeAllViews();
+        sectionList.removeAllViews();
+        try {
+            String result = calculator.evaluate(query);
+            status.setText("calculator · offline · no cloud");
+            smartRow.addView(actionCard("⧉", "copy result", v -> copyText("THEBEST calculation", result, "Result copied")));
+            smartRow.addView(actionCard("⌫", "clear", v -> search.setText("")));
+            sectionList.addView(calculatorCard(query, result));
+        } catch (IllegalArgumentException ex) {
+            status.setText("calculator · keep typing");
+            sectionList.addView(emptyCard("Type a calculation like =19*4 or =(12 + 8) / 2."));
+        }
+    }
+
+    private View calculatorCard(String query, String result) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(12), dp(18), dp(12));
+        card.setMinimumHeight(dp(96));
+        card.setBackground(round(0xff1d2a36, 24, accent));
+        card.setContentDescription("Calculation result " + result);
+
+        TextView expression = text(query, 14, 0xffaeb7c2, false);
+        TextView answer = text(result, 28, Color.WHITE, true);
+        answer.setPadding(0, dp(4), 0, 0);
+        card.addView(expression);
+        card.addView(answer);
+        card.setOnClickListener(v -> copyText("THEBEST calculation", result, "Result copied"));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(108));
+        params.setMargins(0, dp(5), 0, dp(5));
+        card.setLayoutParams(params);
+        return card;
     }
 
     private void renderSmartRow(String query) {
@@ -547,9 +590,13 @@ public class MainActivity extends Activity {
     }
 
     private void copyBackup() {
+        copyText("THEBEST backup", store.exportText(), "Local THEBEST backup copied");
+    }
+
+    private void copyText(String label, String value, String message) {
         ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        clipboard.setPrimaryClip(ClipData.newPlainText("THEBEST backup", store.exportText()));
-        toast("Local THEBEST backup copied");
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, value));
+        toast(message);
     }
 
     private void confirmReset() {
