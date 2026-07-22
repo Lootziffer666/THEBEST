@@ -30,14 +30,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.14.4
         uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3 # v4.4.2
-
-      - name: Make Gradle wrapper executable
-        run: chmod +x gradlew
+        with:
+          gradle-version: 8.14.4
 
       - name: Verify, test, lint, and build debug APK
-        run: ./gradlew --no-daemon :app:verifyNoInternetPermission :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+        run: gradle --no-daemon :app:verifyNoInternetPermission :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
